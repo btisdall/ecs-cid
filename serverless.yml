@@ -1,0 +1,61 @@
+service: ecs-container-drainer
+
+custom:
+  tags:
+    Squad: General
+    CostCenter: 4000
+
+provider:
+  name: aws
+  runtime: python2.7
+  memorySize: 128
+  resourcesStackTags:
+    Squad: ${self:custom.tags.Squad}
+    CostCenter: ${self:custom.tags.CostCenter}
+  iamRoleStatements:
+      - Effect: "Allow"
+        Action:
+          - autoscaling:CompleteLifecycleAction
+          - ec2:DescribeInstances
+          - ec2:DescribeInstanceAttribute
+          - ec2:DescribeTags
+          - ecs:List*
+          - ecs:Describe*
+          - ecs:UpdateContainerInstancesState
+          - ecs:ListTasks
+          - sns:Publish
+          - sns:ListSubscriptions*
+          - cloudformation:Describe*
+          - logs:CreateLog*
+        Resource: "*"
+
+  region: eu-west-1
+  stage: ${self:opt.stage, "dev"}
+  environment:
+    LOGLEVEL: info
+
+package:
+  exclude:
+    - "**"
+  include:
+    - cid/*.py
+    - index.py
+
+functions:
+  container_drainer:
+    handler: index.handler
+    events:
+      - sns: ecs-container-drainer
+    tags:
+      Squad: ${self:custom.tags.Squad}
+      CostCenter: ${self:custom.tags.CostCenter}
+
+resources:
+  Outputs:
+     SNSTopicArn:
+       Description: SNS topic that the ASG terminate hook publishes to
+       Value:
+         Ref: SNSTopicEcscontainerdrainer
+       Export:
+         Name:
+           Fn::Sub: ${self:service}-${self:provider.stage}-SNSTopicArn
