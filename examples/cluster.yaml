@@ -1,0 +1,230 @@
+Description: >
+  ECS cluster with simplest ECS possible service
+
+Parameters:
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  Subnet:
+    Type: AWS::EC2::Subnet::Id
+
+  InstanceType:
+    Type: String
+    Default: t2.small
+
+  ClusterMinSize:
+    Type: Number
+    Default: 2
+
+  ClusterMaxSize:
+    Type: Number
+    Default: 2
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+
+  SquadTag:
+    Description: The name of the squad owning resources
+    Type: String
+
+  ServiceEnvironment:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+  CidStackName:
+    Description: CloudFormation stack name providing the container instance draining Lambda and SNS topic
+    Type: String
+
+Mappings:
+
+  AWSRegionToAMI:
+    eu-west-1:
+      AMI: ami-acb020d5
+    eu-west-2:
+      AMI: ami-4d809829
+    eu-central-1:
+      AMI: ami-eacf5d85
+
+Resources:
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+  SNSLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - autoscaling.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AutoScalingNotificationAccessRole
+
+  ASGTerminateHook:
+    Type: AWS::AutoScaling::LifecycleHook
+    Properties:
+      AutoScalingGroupName: !Ref ECSAutoScalingGroup
+      DefaultResult: ABANDON
+      HeartbeatTimeout: 900
+      LifecycleTransition: autoscaling:EC2_INSTANCE_TERMINATING
+      NotificationTargetARN:
+        Fn::ImportValue: !Sub ${CidStackName}-SNSTopicArn
+      RoleARN: !GetAtt SNSLambdaRole.Arn
+
+  ECSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref Subnet
+      LaunchConfigurationName: !Ref ECSLaunchConfiguration
+      MinSize: !Ref ClusterMinSize
+      MaxSize: !Ref ClusterMaxSize
+      DesiredCapacity: !Ref ClusterMinSize
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+          PropagateAtLaunch: true
+        - Key: Squad
+          Value: !Ref SquadTag
+          PropagateAtLaunch: true
+        - Key: EcsCluster
+          Value: !Ref ECSCluster
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
+
+  ECSLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId:  !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      InstanceType: !Ref InstanceType
+      AssociatePublicIpAddress: true
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeSize: 30
+            DeleteOnTermination: true
+
+      SecurityGroups:
+        - !Ref SecurityGroup
+      IamInstanceProfile: !Ref ECSInstanceProfile
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+          echo ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=15m >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSAutoScalingGroup
+
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          files:
+            "/etc/cfn/cfn-hup.conf":
+              mode: 000400
+              owner: root
+              group: root
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.ContainerInstances.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
+
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-ECSRole-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+               Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ecs:CreateCluster
+                  - ecs:DeregisterContainerInstance
+                  - ecs:DiscoverPollEndpoint
+                  - ecs:Poll
+                  - ecs:RegisterContainerInstance
+                  - ecs:StartTelemetrySession
+                  - ecs:Submit*
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+
+  ECSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ECSRole
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: 1
+      TaskDefinition: !Ref TaskDefinition
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: echoheaders
+          Essential: true
+          Image: brndnmtthws/nginx-echo-headers
+          Memory: 128
+          PortMappings:
+            - ContainerPort: 8080
+
+Outputs:
+
+  Cluster:
+    Description: Reference to the ECS cluster
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-ECSCluster
+  AutoscalingGroup:
+    Description: Reference to the autoscaling group
+    Value: !Ref ECSAutoScalingGroup
