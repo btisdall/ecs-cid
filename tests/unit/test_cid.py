@@ -1,6 +1,7 @@
 import json
 from cid.drainer import ContainerInstanceDrainer
 from mock import Mock, MagicMock, patch
+from botocore.exceptions import ClientError
 
 @patch('boto3.session.Session')
 @patch('logging.getLogger')
@@ -28,7 +29,7 @@ class TestCid():
 
         cid.cache = {}
         expected = ('my_cluster_1', 'my_ci_1')
-        cid.search_for_ecs_details = MagicMock(return_value=expected)
+        cid.search_for_ecs_details = Mock(return_value=expected)
         rv = cid.get_ecs_details('dummy')
 
         cid.search_for_ecs_details.assert_called_with('dummy')
@@ -39,7 +40,7 @@ class TestCid():
 
         cid.cache = dict(EcsCluster='my_cluster_2', ContainerInstanceArn='my_ci_2')
         expected = ('my_cluster_2', 'my_ci_2')
-        cid.search_for_ecs_details = MagicMock()
+        cid.search_for_ecs_details = Mock()
 
         rv = cid.get_ecs_details('dummy')
         assert rv == expected
@@ -70,7 +71,7 @@ class TestCid():
         cid = ContainerInstanceDrainer(event_no_cache, None)
 
         expected_tasks = ['task1', 'task2']
-        cid.ecs_client.list_tasks = MagicMock(return_value={'taskArns': expected_tasks})
+        cid.ecs_client.list_tasks = Mock(return_value={'taskArns': expected_tasks})
         rv = cid.get_running_tasks('SomeCluster', 'SomeCiArn')
 
         cid.ecs_client.list_tasks.assert_called_with(
@@ -78,13 +79,32 @@ class TestCid():
                 containerInstance='SomeCiArn')
         assert rv == expected_tasks
 
-    def test_run_tasks_running(self, mock_logger, mock_session, event_no_cache):
+    def test_complete_hook(self, mock_logger, mock_session, event_no_cache):
+        cid = ContainerInstanceDrainer(event_no_cache, None)
+        kwargs = dict(LifecycleHookName='dummy_hook', AutoScalingGroupName='dummy_asg',
+                      InstanceId='dummy_instanceid', LifecycleActionResult='DUMMY_ACTION')
+
+        cid.complete_hook(**kwargs)
+        cid.asg_client.complete_lifecycle_action.assert_called_with(**kwargs)
+
+        exc = ClientError({}, 'bam!')
+        cid.asg_client.complete_lifecycle_action.side_effect = exc
+        cid.complete_hook(**kwargs)
+        cid.logger.error.assert_called_once_with("Client error attempting to complete lifecycle hook: %s", exc)
+
+        cid.logger.reset_mock()
+        exc = Exception('oof!')
+        cid.asg_client.complete_lifecycle_action.side_effect = exc
+        cid.complete_hook(**kwargs)
+        cid.logger.error.assert_called_once_with("Unknown error attempting to complete lifecycle hook: %s", exc)
+
+    def test_run_with_tasks_still_running(self, mock_logger, mock_session, event_no_cache):
         cid = ContainerInstanceDrainer(event_no_cache, None)
         cid._sleep = Mock()
-        cid.get_ecs_details = MagicMock(return_value=('SomeCluster', 'SomeCiArn'))
-        cid.set_draining = MagicMock()
-        cid.get_running_tasks = MagicMock(return_value=['task1', 'task2'])
-        cid.sns_client = MagicMock()
+        cid.get_ecs_details = Mock(return_value=('SomeCluster', 'SomeCiArn'))
+        cid.set_draining = Mock()
+        cid.complete_hook = Mock()
+        cid.get_running_tasks = Mock(return_value=['task1', 'task2'])
         cid.run()
 
         cid.get_ecs_details.assert_called_with('EC2InstanceIdFromMessage')
@@ -92,18 +112,18 @@ class TestCid():
         cid.get_running_tasks.assert_called_with('SomeCluster', 'SomeCiArn')
         cid._sleep.assert_called_once_with(cid.reinvocation_delay)
         cid.sns_client.publish.assert_called_once()
-        cid.asg_client.complete_lifecycle_action.assert_not_called()
+        cid.complete_hook.assert_not_called()
 
-    def test_run_no_tasks_running(self, mock_logger, mock_session, event_no_cache):
+    def test_run_with_no_tasks_running(self, mock_logger, mock_session, event_no_cache):
         cid = ContainerInstanceDrainer(event_no_cache, None)
-        cid.get_ecs_details = MagicMock(return_value=('SomeCluster', 'SomeCiArn'))
-        cid.set_draining = MagicMock()
-        cid.get_running_tasks = MagicMock(return_value=[])
-        cid.sns_client = MagicMock()
+        cid._sleep = Mock()
+        cid.get_ecs_details = Mock(return_value=('SomeCluster', 'SomeCiArn'))
+        cid.set_draining = Mock()
+        cid.get_running_tasks = Mock(return_value=[])
+        cid.complete_hook = Mock()
         cid.run()
 
         cid.get_ecs_details.assert_called_with('EC2InstanceIdFromMessage')
         cid.set_draining.assert_called_with('SomeCluster', 'SomeCiArn')
         cid.get_running_tasks.assert_called_with('SomeCluster', 'SomeCiArn')
-        cid.sns_client.publish.assert_not_called()
-        cid.asg_client.complete_lifecycle_action.assert_called_once()
+        cid.complete_hook.assert_called()

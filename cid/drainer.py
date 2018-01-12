@@ -1,5 +1,6 @@
 from __future__ import print_function
 import boto3
+from botocore.exceptions import ClientError
 import json
 import logging
 import os
@@ -115,6 +116,17 @@ class ContainerInstanceDrainer:
 
         return running_tasks
 
+    def complete_hook(self, **kwargs):
+        logger = self.logger
+        try:
+            response = self.asg_client.complete_lifecycle_action(**kwargs)
+            logger.info("Response received from complete_lifecycle_action: %s", response)
+            logger.info("Completed lifecycle hook action")
+        except ClientError as e:
+            logger.error("Client error attempting to complete lifecycle hook: %s", e)
+        except Exception as e:
+            logger.error("Unknown error attempting to complete lifecycle hook: %s", e)
+
     def run(self):
         logger = self.logger
         message = self.message
@@ -169,11 +181,7 @@ class ContainerInstanceDrainer:
         logger.info("No tasks are running on instance %s, completing lifecycle action...",
                     ec2_instance_id)
 
-        response = self.asg_client.complete_lifecycle_action(
-                        LifecycleHookName=lifecycle_hook_name,
-                        AutoScalingGroupName=asg_name,
-                        LifecycleActionResult='CONTINUE',
-                        InstanceId=ec2_instance_id)
-
-        logger.info("Response received from complete_lifecycle_action: %s", response)
-        logger.info("Completed lifecycle hook action")
+        self.complete_hook(LifecycleHookName=lifecycle_hook_name,
+                           AutoScalingGroupName=asg_name,
+                           LifecycleActionResult='CONTINUE',
+                           InstanceId=ec2_instance_id)
