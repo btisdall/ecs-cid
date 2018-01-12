@@ -80,6 +80,7 @@ class TestCid():
 
     def test_run_tasks_running(self, mock_logger, mock_session, event_no_cache):
         cid = ContainerInstanceDrainer(event_no_cache, None)
+        cid._sleep = Mock()
         cid.get_ecs_details = MagicMock(return_value=('SomeCluster', 'SomeCiArn'))
         cid.set_draining = MagicMock()
         cid.get_running_tasks = MagicMock(return_value=['task1', 'task2'])
@@ -89,6 +90,7 @@ class TestCid():
         cid.get_ecs_details.assert_called_with('EC2InstanceIdFromMessage')
         cid.set_draining.assert_called_with('SomeCluster', 'SomeCiArn')
         cid.get_running_tasks.assert_called_with('SomeCluster', 'SomeCiArn')
+        cid._sleep.assert_called_once_with(cid.reinvocation_delay)
         cid.sns_client.publish.assert_called_once()
         cid.asg_client.complete_lifecycle_action.assert_not_called()
 

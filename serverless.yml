@@ -9,6 +9,7 @@ provider:
   name: aws
   runtime: python2.7
   memorySize: 128
+  timeout: 10
   resourcesStackTags:
     Squad: ${self:custom.tags.Squad}
     CostCenter: ${self:custom.tags.CostCenter}

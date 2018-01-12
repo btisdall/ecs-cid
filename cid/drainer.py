@@ -3,6 +3,7 @@ import boto3
 import json
 import logging
 import os
+import time
 
 
 class ContainerInstanceDrainer:
@@ -13,6 +14,8 @@ class ContainerInstanceDrainer:
         logger = logging.getLogger()
         logger.setLevel(getattr(logging, os.environ.get('LOGLEVEL', 'WARNING').upper()))
         self.logger = logger
+
+        self.reinvocation_delay = 5
 
         self.event = event
         self.message = json.loads(event['Records'][0]['Sns']['Message'])
@@ -25,6 +28,10 @@ class ContainerInstanceDrainer:
         self.ecs_client = session.client(service_name='ecs')
         self.asg_client = session.client(service_name='autoscaling')
         self.sns_client = session.client(service_name='sns')
+
+    @staticmethod
+    def _sleep(s):
+        time.sleep(s)
 
     def search_for_ecs_details(self, ec2_instance_id):
         """
@@ -150,7 +157,11 @@ class ContainerInstanceDrainer:
             cache['EcsCluster'], cache['ContainerInstanceArn'] = cluster, container_instance_arn
             message['_CidLambdaCache'] = cache
 
-            self.logger.info("Publishing to SNS topic: %s", topic_arn)
+            self.logger.info("Publishing to SNS topic: %s after %s seconds...",
+                             topic_arn, self.reinvocation_delay)
+
+            self._sleep(self.reinvocation_delay)
+
             self.sns_client.publish(TopicArn=topic_arn, Message=json.dumps(message),
                                     Subject='Re-invocation')
             return
