@@ -88,12 +88,10 @@ class ContainerInstanceDrainer:
             logger.info("Container instance: %s previously set to draining", container_instance_arn)
             return
 
-        logger.info(
-            "Setting status of container instance: %s to DRAINING...", container_instance_arn)
+        logger.info("Setting status of container instance: %s to DRAINING...", container_instance_arn)
 
         self.ecs_client.update_container_instances_state(
-            cluster=cluster, containerInstances=[container_instance_arn], status='DRAINING',
-        )
+            cluster=cluster, containerInstances=[container_instance_arn], status='DRAINING')
 
         self.cache['InstanceIsDraining'] = True
 
@@ -117,6 +115,10 @@ class ContainerInstanceDrainer:
         return running_tasks
 
     def complete_hook(self, **kwargs):
+        """
+        Complete autoscaling hook
+        :param **kwargs: Pass through args to complete_lifecycle_action()
+        """
         logger = self.logger
         try:
             response = self.asg_client.complete_lifecycle_action(**kwargs)
@@ -162,14 +164,13 @@ class ContainerInstanceDrainer:
 
         if len(tasks_running) > 0:
 
-            logger.info("There are still running tasks on %s, invoking myself again to re-check",
-                        container_instance_arn)
+            logger.info("There are still running tasks on %s", container_instance_arn)
 
             cache = self.cache
             cache['EcsCluster'], cache['ContainerInstanceArn'] = cluster, container_instance_arn
             message['_CidLambdaCache'] = cache
 
-            self.logger.info("Publishing to SNS topic: %s after %s seconds...",
+            self.logger.info("Re-invoking myself via SNS topic: %s in %s seconds...",
                              topic_arn, self.reinvocation_delay)
 
             self._sleep(self.reinvocation_delay)
