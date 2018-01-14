@@ -65,8 +65,15 @@ Resources:
                 - autoscaling.amazonaws.com
             Action:
               - sts:AssumeRole
-      ManagedPolicyArns:
-      - arn:aws:iam::aws:policy/service-role/AutoScalingNotificationAccessRole
+      Policies:
+        - PolicyName: trigger-lambda
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - Fn::ImportValue: !Sub ${CidStackName}-SNSTopicArn
 
   ASGTerminateHook:
     Type: AWS::AutoScaling::LifecycleHook
@@ -150,7 +157,7 @@ Resources:
               content: !Sub |
                 [cfn-auto-reloader-hook]
                 triggers=post.update
-                path=Resources.ContainerInstances.Metadata.AWS::CloudFormation::Init
+                path=Resources.ECSLaunchConfiguration.Metadata.AWS::CloudFormation::Init
                 action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchConfiguration
 
           services:
