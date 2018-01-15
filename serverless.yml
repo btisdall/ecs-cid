@@ -31,7 +31,7 @@ provider:
         Resource: "*"
 
   region: eu-west-1
-  stage: ${self:opt.stage, "dev"}
+  stage: ${opt:stage, "dev"}
   environment:
     LOGLEVEL: info
 
@@ -46,7 +46,7 @@ functions:
   container_drainer:
     handler: index.handler
     events:
-      - sns: ecs-container-drainer
+      - sns: ecs-container-drainer-${self:provider.stage}
     tags:
       Squad: ${self:custom.tags.Squad}
       CostCenter: ${self:custom.tags.CostCenter}
@@ -56,7 +56,9 @@ resources:
      SNSTopicArn:
        Description: SNS topic that the ASG terminate hook publishes to
        Value:
-         Ref: SNSTopicEcscontainerdrainer
+         # NOTE: must be the normalised logical resource name.
+         # https://serverless.com/framework/docs/providers/aws/guide/resources/
+         Ref: SNSTopicEcscontainerdrainer${self:provider.stage}
        Export:
          Name:
            Fn::Sub: ${self:service}-${self:provider.stage}-SNSTopicArn
