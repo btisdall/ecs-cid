@@ -6,6 +6,7 @@ from botocore.exceptions import ClientError
 @patch('boto3.session.Session')
 @patch('logging.getLogger')
 class TestCid():
+
     def test_init_message_has_no_cache(self, mock_logger, mock_session, event_no_cache):
         cid = ContainerInstanceDrainer(event_no_cache, None)
         assert cid.cache == {}
@@ -97,6 +98,20 @@ class TestCid():
         cid.asg_client.complete_lifecycle_action.side_effect = exc
         cid.complete_hook(**kwargs)
         cid.logger.error.assert_called_once_with("Unknown error attempting to complete lifecycle hook: %s", exc)
+
+    def test_run_sad_ecs_details(self, mock_logger, mock_session, event_no_cache):
+        cid = ContainerInstanceDrainer(event_no_cache, None)
+        cid._sleep = Mock()
+        cid.get_ecs_details = Mock(return_value=('SomeCluster', 'SomeCiArn'))
+        cid.set_draining = Mock()
+        cid.complete_hook = Mock()
+        cid.get_running_tasks = Mock(return_value=['task1', 'task2'])
+        cid.get_ecs_details = Mock(return_value=())
+        cid.run()
+
+        cid.logger.error.assert_called_with(
+                "Unable to find cluster or container instance matching ec2 instance-id: %s",
+                'EC2InstanceIdFromMessage')
 
     def test_run_with_tasks_still_running(self, mock_logger, mock_session, event_no_cache):
         cid = ContainerInstanceDrainer(event_no_cache, None)

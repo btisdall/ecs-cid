@@ -58,8 +58,6 @@ class ContainerInstanceDrainer:
                         if container['ec2InstanceId'] == ec2_instance_id:
                             return (cluster, container['containerInstanceArn'])
 
-        self.logger.info("EC2 instance-id: %s does not appear to be a member of an ECS cluster",
-                         ec2_instance_id)
         return ()
 
     def get_ecs_details(self, ec2_instance_id):
@@ -147,7 +145,13 @@ class ContainerInstanceDrainer:
         logger.info("Received termination notification for EC2 instance-id: %s, ASG: %s",
                     ec2_instance_id, asg_name)
 
-        cluster, container_instance_arn = self.get_ecs_details(ec2_instance_id)
+        ecs_details = self.get_ecs_details(ec2_instance_id)
+        if not ecs_details:
+            logger.error("Unable to find cluster or container instance matching ec2 instance-id: %s",
+                         ec2_instance_id)
+            return
+
+        cluster, container_instance_arn = ecs_details
         logger.info(
             "EC2 instance-id: %s appears to be container instance ARN: %s, belonging to ECS cluster: %s",
             ec2_instance_id, container_instance_arn, cluster
