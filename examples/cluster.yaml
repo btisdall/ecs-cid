@@ -1,5 +1,5 @@
 Description: >
-  ECS cluster with simplest ECS possible service
+  ECS cluster with simplest possible ECS service
 
 Parameters:
 
@@ -19,7 +19,7 @@ Parameters:
 
   ClusterMaxSize:
     Type: Number
-    Default: 2
+    Default: 5
 
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName
@@ -42,11 +42,11 @@ Mappings:
 
   AWSRegionToAMI:
     eu-west-1:
-      AMI: ami-acb020d5
+      AMI: ami-1d46df64
     eu-west-2:
-      AMI: ami-4d809829
+      AMI: ami-67cbd003
     eu-central-1:
-      AMI: ami-eacf5d85
+      AMI: ami-509a053f
 
 Resources:
 
@@ -94,7 +94,6 @@ Resources:
       LaunchConfigurationName: !Ref ECSLaunchConfiguration
       MinSize: !Ref ClusterMinSize
       MaxSize: !Ref ClusterMaxSize
-      DesiredCapacity: !Ref ClusterMinSize
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
@@ -124,7 +123,7 @@ Resources:
       BlockDeviceMappings:
         - DeviceName: "/dev/xvda"
           Ebs:
-            VolumeSize: 30
+            VolumeSize: 10
             DeleteOnTermination: true
 
       SecurityGroups:
